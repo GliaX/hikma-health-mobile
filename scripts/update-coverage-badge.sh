@@ -17,10 +17,12 @@ COLOR=$(echo "$BADGE_INFO" | cut -d' ' -f2)
 
 # Download badge SVG
 mkdir -p badges
-curl -s "https://img.shields.io/badge/coverage-${COVERAGE}%25-${COLOR}" -o ./badges/coverage.svg
+curl -s --max-time 15 --connect-timeout 5 \
+  "https://img.shields.io/badge/coverage-${COVERAGE}%25-${COLOR}" \
+  -o ./badges/coverage.svg || echo "Badge download skipped (network unavailable)"
 
-# Update the coverage badge in README.md
-sed -i '' "s|!\[check-code-coverage\].*|![check-code-coverage](./badges/coverage.svg)|" README.md
+# Update the coverage badge in README.md (GNU sed — no backup-suffix arg)
+sed -i "s|!\[check-code-coverage\].*|![check-code-coverage](./badges/coverage.svg)|" README.md || true
 
 # Stage the updated badge and README
 git add badges/coverage.svg README.md

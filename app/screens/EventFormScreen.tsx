@@ -1,6 +1,7 @@
 import { FC, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityIndicator, Alert, TextStyle, ViewStyle } from "react-native"
 import * as DocumentPicker from "expo-document-picker"
+import * as SecureStore from "expo-secure-store"
 import {
   BottomSheetModal,
   BottomSheetModalProvider,
@@ -541,9 +542,9 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
         },
       }))
 
-      // Pick document
+      // Pick image from device
       const result = await DocumentPicker.getDocumentAsync({
-        type: "*/*", // Allow any file type
+        type: "image/*",
         copyToCacheDirectory: true,
       })
 
@@ -574,15 +575,31 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
         type: file.mimeType,
       } as any)
 
+      // Build auth header — prefer Bearer token, fall back to Basic auth
+      const token = await SecureStore.getItemAsync("provider_token")
+      let authHeader = ""
+      if (token) {
+        authHeader = `Bearer ${token}`
+      } else {
+        const email = await SecureStore.getItemAsync("provider_email")
+        const password = await SecureStore.getItemAsync("provider_password")
+        if (email && password) {
+          authHeader = `Basic ${btoa(`${email}:${password}`)}`
+        }
+      }
+      if (!authHeader) throw new Error("Not authenticated")
+
       // Upload to server
       const apiUrl = await Peer.getActiveUrl()
       if (!apiUrl) throw new Error("No server URL configured")
-      console.log(`Uploading to ${apiUrl}/v1/api/forms/resources`)
-      const response = await fetch(`${apiUrl}/v1/api/forms/resources`, {
-        method: "PUT",
+      console.log(`Uploading to ${apiUrl}/api/forms/resources`)
+      // Note: do NOT set Content-Type manually — fetch sets it with the
+      // correct multipart boundary automatically when body is FormData.
+      const response = await fetch(`${apiUrl}/api/forms/resources`, {
+        method: "POST",
         body: formData,
         headers: {
-          "Content-Type": "multipart/form-data",
+          Authorization: authHeader,
         },
       })
 
@@ -808,8 +825,7 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
                   />
                 </If>
 
-                {/* File UPLOADS ARE NOT SUPPORTED YET */}
-                <If condition={field.inputType === "file" && false}>
+                <If condition={field.inputType === "file"}>
                   <Controller
                     render={() => (
                       <View gap={4}>

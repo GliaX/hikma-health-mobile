@@ -904,41 +904,70 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
 
                 <If condition={field.inputType === "radio"}>
                   <Controller
-                    render={({ field: { value } }) => (
-                      <View gap={4}>
-                        <Text
-                          text={resolved?.fieldNames[field.id] ?? field.name}
-                          preset="formLabel"
-                          withAsterisk={field.required}
-                        />
-                        {getFieldDescription(field) ? (
+                    render={({ field: { value } }) => {
+                      const isMulti = Option.isOption(field.multi)
+                        ? Option.getOrElse(field.multi, () => false)
+                        : field.multi || false
+                      const selectedValues = isMulti
+                        ? (multiPickerValue(value, true) as string[])
+                        : []
+                      return (
+                        <View gap={4}>
                           <Text
-                            text={getFieldDescription(field)}
-                            size="xs"
-                            color={colors.textDim}
+                            text={resolved?.fieldNames[field.id] ?? field.name}
+                            preset="formLabel"
+                            withAsterisk={field.required}
                           />
-                        ) : null}
-                        <View mt={4} />
-                        {getTranslatedItems(field).map((option: any) => (
-                          <Radio
-                            key={option.value}
-                            label={option.label}
-                            value={value === option.value}
-                            onValueChange={(value) => {
-                              if (value) {
-                                setValue(
-                                  sanitizeFieldName(field.name) as never,
-                                  option.value as never,
-                                )
-                              } else {
-                                // set the default value to an empty string
-                                setValue(sanitizeFieldName(field.name) as never, "" as never)
-                              }
-                            }}
-                          />
-                        ))}
-                      </View>
-                    )}
+                          {getFieldDescription(field) ? (
+                            <Text
+                              text={getFieldDescription(field)}
+                              size="xs"
+                              color={colors.textDim}
+                            />
+                          ) : null}
+                          <View mt={4} />
+                          {getTranslatedItems(field).map((option: any) =>
+                            isMulti ? (
+                              <Checkbox
+                                key={option.value}
+                                label={option.label}
+                                value={selectedValues.includes(option.value)}
+                                onValueChange={(checked) => {
+                                  const current = multiPickerValue(
+                                    getValues(sanitizeFieldName(field.name)) as any,
+                                    true,
+                                  ) as string[]
+                                  const updated = checked
+                                    ? [...current, option.value]
+                                    : current.filter((v) => v !== option.value)
+                                  setValue(
+                                    sanitizeFieldName(field.name) as never,
+                                    updated.join("; ") as never,
+                                  )
+                                }}
+                              />
+                            ) : (
+                              <Radio
+                                key={option.value}
+                                label={option.label}
+                                value={value === option.value}
+                                onValueChange={(selected) => {
+                                  if (selected) {
+                                    setValue(
+                                      sanitizeFieldName(field.name) as never,
+                                      option.value as never,
+                                    )
+                                  } else {
+                                    // set the default value to an empty string
+                                    setValue(sanitizeFieldName(field.name) as never, "" as never)
+                                  }
+                                }}
+                              />
+                            ),
+                          )}
+                        </View>
+                      )
+                    }}
                     name={sanitizeFieldName(field.name) as never}
                     control={control}
                   />

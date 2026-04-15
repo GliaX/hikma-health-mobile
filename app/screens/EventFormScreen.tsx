@@ -1,6 +1,6 @@
 import { FC, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, Alert, TextStyle, ViewStyle } from "react-native"
-import * as DocumentPicker from "expo-document-picker"
+import { ActionSheetIOS, ActivityIndicator, Alert, Platform, TextStyle, ViewStyle } from "react-native"
+import * as ImagePicker from "expo-image-picker"
 import * as SecureStore from "expo-secure-store"
 import {
   BottomSheetModal,
@@ -68,6 +68,7 @@ type FileUploadState = {
   isUploading: boolean
   isComplete: boolean
   fileName: string | null
+  /** Local file:// path (before sync uploads it) or server UUID (after sync) */
   fileId: string | null
   error: string | null
 }
@@ -527,10 +528,80 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
     return []
   }, [form?.formFields])
 
-  // Handle file selection and upload
+  // Prompt the user to choose between camera and photo library, then return
+  // the chosen image. Returns null if cancelled or permission denied.
+  const pickImage = (): Promise<ImagePicker.ImagePickerAsset | null> =>
+    new Promise((resolve) => {
+      const openCamera = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync()
+        if (status !== "granted") {
+          Alert.alert("Permission required", "Camera permission is needed to take photos.")
+          return resolve(null)
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          quality: 0.8,
+        })
+        resolve(result.canceled ? null : result.assets[0])
+      }
+
+      const openLibrary = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+        if (status !== "granted") {
+          Alert.alert("Permission required", "Photo library permission is needed to select images.")
+          return resolve(null)
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          quality: 0.8,
+        })
+        resolve(result.canceled ? null : result.assets[0])
+      }
+
+      if (Platform.OS === "ios") {
+        ActionSheetIOS.showActionSheetWithOptions(
+          { options: ["Cancel", "Take Photo", "Choose from Library"], cancelButtonIndex: 0 },
+          (idx) => {
+            if (idx === 1) openCamera()
+            else if (idx === 2) openLibrary()
+            else resolve(null)
+          },
+        )
+      } else {
+        // Android — use an Alert as the action sheet
+        Alert.alert("Add Photo", "Choose a source", [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(null) },
+          { text: "Take Photo", onPress: openCamera },
+          { text: "Choose from Library", onPress: openLibrary },
+        ])
+      }
+    })
+
+  // Handle file selection: pick or capture an image, save it to the app's
+  // document directory, and store the local path as the form value.
+  // The actual upload to the server happens during sync, not here.
   const handleFileUpload = async (fieldName: string) => {
+    // Simple sequential toast — each message shows for 2 s before the next
+    const _fq: string[] = []
+    let _fa = false
+    const toast = (msg: string) => {
+      console.log(`[FileUpload] ${msg}`)
+      _fq.push(msg)
+      if (_fa) return
+      const show = () => {
+        if (_fq.length === 0) { _fa = false; return }
+        _fa = true
+        Toast.show(`[Photo] ${_fq.shift()!}`, {
+          duration: 2000,
+          position: Toast.positions.TOP,
+          containerStyle: { marginTop: 60 },
+        })
+        setTimeout(show, 2100)
+      }
+      show()
+    }
+
     try {
-      // Initialize upload state
       setFileUploads((prev) => ({
         ...prev,
         [fieldName]: {
@@ -542,110 +613,53 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
         },
       }))
 
-      // Pick image from device
-      const result = await DocumentPicker.getDocumentAsync({
-        type: "image/*",
-        copyToCacheDirectory: true,
-      })
+      const asset = await pickImage()
 
-      if (result.canceled) {
-        console.log("Document picking canceled by user")
+      if (!asset) {
         setFileUploads((prev) => ({
           ...prev,
-          [fieldName]: {
-            isUploading: false,
-            isComplete: false,
-            fileName: null,
-            fileId: null,
-            error: null,
-          },
+          [fieldName]: { isUploading: false, isComplete: false, fileName: null, fileId: null, error: null },
         }))
         return
       }
 
-      const file = result.assets[0]
-      console.log(`File selected: ${file.name}, type: ${file.mimeType}, size: ${file.size} bytes`)
+      toast(`Got image: ${asset.uri.substring(0, 60)}`)
 
-      // Create FormData object
-      console.log("Creating FormData for upload")
-      const formData = new FormData()
-      formData.append("file", {
-        uri: file.uri,
-        name: file.name,
-        type: file.mimeType,
-      } as any)
+      // Store the original URI from the picker — do NOT copy it to internal
+      // storage. The picker URI (content:// on Android, file:// on iOS) is
+      // readable by React Native's fetch FormData, whereas a manually-copied
+      // file:// path in the documents directory is not.
+      // uploadPendingResources() will use this URI to upload and then replace
+      // it with the server resource UUID on the next sync.
+      const pickerUri = asset.uri
+      const displayName = pickerUri.split("/").pop() ?? "photo"
 
-      // Build auth header — prefer Bearer token, fall back to Basic auth
-      const token = await SecureStore.getItemAsync("provider_token")
-      let authHeader = ""
-      if (token) {
-        authHeader = `Bearer ${token}`
-      } else {
-        const email = await SecureStore.getItemAsync("provider_email")
-        const password = await SecureStore.getItemAsync("provider_password")
-        if (email && password) {
-          authHeader = `Basic ${btoa(`${email}:${password}`)}`
-        }
-      }
-      if (!authHeader) throw new Error("Not authenticated")
+      toast(`Stored URI for sync upload`)
 
-      // Upload to server
-      const apiUrl = await Peer.getActiveUrl()
-      if (!apiUrl) throw new Error("No server URL configured")
-      console.log(`Uploading to ${apiUrl}/api/forms/resources`)
-      // Note: do NOT set Content-Type manually — fetch sets it with the
-      // correct multipart boundary automatically when body is FormData.
-      const response = await fetch(`${apiUrl}/api/forms/resources`, {
-        method: "POST",
-        body: formData,
-        headers: {
-          Authorization: authHeader,
-        },
-      })
-
-      console.log(`Server response status: ${response.status}`)
-      if (!response.ok) {
-        throw new Error(`Upload failed with status ${response.status}`)
-      }
-
-      const responseData = await response.json()
-      console.log("Upload successful, response data:", responseData)
-
-      // Update state with successful upload
-      console.log(`Updating state for successful upload of ${file.name}`)
       setFileUploads((prev) => ({
         ...prev,
         [fieldName]: {
           isUploading: false,
           isComplete: true,
-          fileName: file.name,
-          fileId: responseData.id, // Assuming the API returns an id field
+          fileName: displayName,
+          fileId: pickerUri,
           error: null,
         },
       }))
 
-      // Update form control value
-      console.log(`Setting form value for ${fieldName} to ${responseData.id}`)
-      setValue(fieldName as never, responseData.id as never)
+      setValue(fieldName as never, pickerUri as never)
     } catch (error: unknown) {
-      console.error("File upload error:", error)
       Sentry.captureException(error)
-
-      // Update state with error
-      const errorMessage = error instanceof Error ? error.message : "Failed to upload file"
-      console.log(`Updating state for failed upload: ${errorMessage}`)
+      const errorMessage = error instanceof Error ? error.message : "Failed to save photo"
+      Toast.show(`[Photo] ERROR: ${errorMessage}`, {
+        duration: Toast.durations.LONG,
+        position: Toast.positions.TOP,
+        containerStyle: { marginTop: 60 },
+      })
       setFileUploads((prev) => ({
         ...prev,
-        [fieldName]: {
-          isUploading: false,
-          isComplete: false,
-          fileName: null,
-          fileId: null,
-          error: errorMessage,
-        },
+        [fieldName]: { isUploading: false, isComplete: false, fileName: null, fileId: null, error: errorMessage },
       }))
-
-      Alert.alert("Upload Error", "Failed to upload file. Please try again.")
     }
   }
 
@@ -849,7 +863,7 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
                               style={$inputWrapperStyle as unknown as ViewStyle}
                             >
                               <ActivityIndicator size="small" color={colors.palette.primary400} />
-                              <Text text="Uploading..." />
+                              <Text text="Saving..." />
                             </View>
                           ) : fileUploads[field.name]?.isComplete ? (
                             <View
@@ -867,7 +881,7 @@ export const EventFormScreen: FC<EventFormScreenProps> = ({ navigation, route })
                             </View>
                           ) : (
                             <Button
-                              text="Select File"
+                              text="Add Photo"
                               preset="default"
                               style={$fileButtonStyle}
                               onPress={() => handleFileUpload(field.name)}

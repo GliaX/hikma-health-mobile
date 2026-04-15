@@ -121,6 +121,13 @@
       }
     ],
     [
+      "expo-image-picker",
+      {
+        "photosPermission": "Allow $(PRODUCT_NAME) to access your photo library to attach images to patient forms.",
+        "cameraPermission": "Allow $(PRODUCT_NAME) to use the camera to take photos for patient forms."
+      }
+    ],
+    [
       "@sentry/react-native/expo",
       {
         "url": "https://sentry.io/",

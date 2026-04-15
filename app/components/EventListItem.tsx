@@ -1,6 +1,8 @@
-import { Pressable, StyleProp, ViewStyle } from "react-native"
+import { useEffect, useState } from "react"
+import { Image, Pressable, StyleProp, ViewStyle } from "react-native"
 import { withObservables } from "@nozbe/watermelondb/react"
 import { upperFirst } from "es-toolkit/compat"
+import * as SecureStore from "expo-secure-store"
 import { LucideEllipsisVertical } from "lucide-react-native"
 
 import { Text } from "@/components/Text"
@@ -8,6 +10,7 @@ import { View } from "@/components/View"
 import EventModel from "@/db/model/Event"
 import Event from "@/models/Event"
 import ICDEntry from "@/models/ICDEntry"
+import Peer from "@/models/Peer"
 import { colors } from "@/theme/colors"
 
 import { If } from "./If"
@@ -142,6 +145,51 @@ export const getDiagnosesFromFormData = (formData: Event.FormDataItem[]): Array<
  * @param {string} language - The language code
  * @returns {JSX.Element} - The JSX element to display
  */
+/**
+ * Renders a file field value. Handles two cases:
+ *  - Local file:// path (saved on device, not yet synced to server)
+ *  - Server resource UUID (uploaded during sync)
+ */
+function FileFieldImage({ value }: { value: string }) {
+  const isLocal =
+    value.startsWith("file://") ||
+    value.startsWith("content://") ||
+    value.startsWith("/data/") ||
+    value.startsWith("/var/")
+
+  const [source, setSource] = useState<{ uri: string; headers?: Record<string, string> } | null>(
+    null,
+  )
+
+  useEffect(() => {
+    if (!value) return
+
+    if (isLocal) {
+      setSource({ uri: value })
+      return
+    }
+
+    // Server UUID — build the authenticated image URL
+    Promise.all([Peer.getActiveUrl(), SecureStore.getItemAsync("provider_token")]).then(
+      ([apiUrl, token]) => {
+        if (!apiUrl) return
+        const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
+        setSource({ uri: `${apiUrl}/api/forms/resources/${value}`, headers })
+      },
+    )
+  }, [value, isLocal])
+
+  if (!source) return null
+
+  return (
+    <Image
+      source={source}
+      style={{ width: "100%", height: 200, borderRadius: 8, marginTop: 4 }}
+      resizeMode="contain"
+    />
+  )
+}
+
 const getEventDisplay = (event: EventModel, language: string): React.JSX.Element => {
   const { formData } = event
 
@@ -188,7 +236,10 @@ const getEventDisplay = (event: EventModel, language: string): React.JSX.Element
                   ))}
               </View>
             </If>
-            <If condition={fieldType !== "diagnosis" && inputType !== "input-group"}>
+            <If condition={inputType === "file"}>
+              <FileFieldImage value={String(value)} />
+            </If>
+            <If condition={fieldType !== "diagnosis" && inputType !== "input-group" && inputType !== "file"}>
               <Text text={String(value)} />
             </If>
           </View>

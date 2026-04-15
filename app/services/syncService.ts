@@ -20,6 +20,7 @@ import Toast from "react-native-root-toast"
 
 import database from "@/db"
 import { syncDB } from "@/db/peerSync"
+import { uploadPendingResources } from "@/services/resourceUploadService"
 import { translate } from "@/i18n/translate"
 import Peer from "@/models/Peer"
 import Sync from "@/models/Sync"
@@ -107,6 +108,10 @@ export const startSync = async (providerEmail?: string): Promise<void> => {
     }
 
     const hasLocalChangesToPush = await hasUnsyncedChanges({ database })
+
+    // Upload any locally-stored images before pushing event data, so the
+    // server receives resource IDs rather than local file:// paths.
+    await uploadPendingResources()
 
     Toast.show(translate("common:syncStarted"), {
       position: Toast.positions.BOTTOM,

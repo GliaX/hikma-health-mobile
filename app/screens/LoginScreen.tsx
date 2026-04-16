@@ -11,7 +11,7 @@ import {
 import { BarcodeScanningResult, Camera, CameraView } from "expo-camera"
 import * as SecureStore from "expo-secure-store"
 import { useSelector } from "@xstate/react"
-import { InfoIcon, QrCodeIcon, XIcon } from "lucide-react-native"
+import { EyeIcon, EyeOffIcon, InfoIcon, QrCodeIcon, XIcon } from "lucide-react-native"
 import Toast from "react-native-root-toast"
 import { useImmer } from "use-immer"
 
@@ -61,6 +61,8 @@ export const LoginScreen: FC<LoginScreenProps> = ({ navigation }) => {
 
   const isDarkmode = theme.isDark
   const launchIcon = require("@/assets/images/launch_icon.png")
+
+  const [passwordVisible, setPasswordVisible] = useState(false)
 
   const [hasPermission, setHasPermission] = useState<boolean | null>(null)
   const [scannerVisible, setScannerVisible] = useState(false)
@@ -294,13 +296,27 @@ export const LoginScreen: FC<LoginScreenProps> = ({ navigation }) => {
           <TextField
             autoCapitalize="none"
             labelTx="login:password"
-            secureTextEntry={true}
+            secureTextEntry={!passwordVisible}
             value={creds.password}
             onChangeText={(t) =>
               updateCreds((d) => {
                 d.password = t
               })
             }
+            RightAccessory={() => (
+              <Pressable
+                onPress={() => setPasswordVisible((v) => !v)}
+                style={{ paddingHorizontal: 12, justifyContent: "center" }}
+                accessibilityLabel={passwordVisible ? "Hide password" : "Show password"}
+                accessibilityRole="button"
+              >
+                {passwordVisible ? (
+                  <EyeOffIcon size={20} color={colors.palette.neutral500} />
+                ) : (
+                  <EyeIcon size={20} color={colors.palette.neutral500} />
+                )}
+              </Pressable>
+            )}
           />
 
           <LanguageToggle preset="options" size="xs" />
